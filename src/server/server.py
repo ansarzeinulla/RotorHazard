@@ -2579,11 +2579,11 @@ def on_confirm_heat(data):
         if data.get('source') == 'run' and RaceContext.race.race_status == RaceStatus.READY:
             RaceContext.race.set_heat(data['heat_id'], force=True)
 
-@SOCKET_IO.on('set_current_heat', get_from_typehint=True)
+@SOCKET_IO.on('set_current_heat')
 @catchLogExcWithDBWrapper
-def on_set_current_heat(data: SetCurrentHeatRequest) -> None:
+def on_set_current_heat(data):
     '''Update the current heat variable and data.'''
-    RaceContext.race.set_heat(data.heat)
+    RaceContext.race.set_heat(data['heat'])
     RaceContext.rhui.emit_race_status()
 
 @SOCKET_IO.on('delete_lap')
