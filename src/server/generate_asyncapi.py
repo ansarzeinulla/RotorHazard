@@ -13,7 +13,7 @@ def main() -> int:
         "-o",
         "--output",
         type=Path,
-        default=Path(__file__).parent.parent.parent / "DronlyWork" / "asyncapi.yaml",
+        default=Path(__file__).with_name("asyncapi.yaml"),
         help="Output YAML path. Defaults to src/server/asyncapi.yaml",
     )
     args = parser.parse_args()

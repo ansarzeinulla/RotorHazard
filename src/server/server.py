@@ -935,26 +935,25 @@ def dispatch_event(evtArgs):
     '''Dispatch generic event.'''
     Events.trigger(Evt.UI_DISPATCH, evtArgs)
 
-@SOCKET_IO.on('load_data', get_from_typehint=True)
+@SOCKET_IO.on('load_data')
 @catchLogExcWithDBWrapper
-def on_load_data(data: LoadDataRequest) -> None:
+def on_load_data(data):
     '''Allow pages to load needed data'''
-    load_types = data.load_types
+    load_types = data['load_types']
     for load_type in load_types:
-        if isinstance(load_type, DictLoadType):
-            if load_type.type == 'ui':
-                RaceContext.rhui.emit_ui(load_type.value, nobroadcast=True)
-            if load_type.type == 'config':
-                RaceContext.rhui.emit_config_update(load_type.value, nobroadcast=True)
-            continue
-        if Use_imdtabler_jar_flag:
-            heartbeat_thread_function.imdtabler_flag = True
-        if load_type == 'node_data':
+        if isinstance(load_type, dict):
+            if load_type['type'] == 'ui':
+                RaceContext.rhui.emit_ui(load_type['value'], nobroadcast=True)
+            if load_type['type'] == 'config':
+                RaceContext.rhui.emit_config_update(load_type['value'], nobroadcast=True)
+        elif load_type == 'node_data':
             RaceContext.rhui.emit_node_data(nobroadcast=True)
         elif load_type == 'environmental_data':
             RaceContext.rhui.emit_environmental_data(nobroadcast=True)
         elif load_type == 'frequency_data':
             RaceContext.rhui.emit_frequency_data(nobroadcast=True)
+            if Use_imdtabler_jar_flag:
+                heartbeat_thread_function.imdtabler_flag = True
         elif load_type == 'heat_list':
             RaceContext.rhui.emit_heat_list(nobroadcast=True)
         elif load_type == 'heat_data':
@@ -2746,43 +2745,44 @@ def on_retry_secondary(data):
     RaceContext.cluster.retrySecondary(data['secondary_id'])
     RaceContext.rhui.emit_cluster_status()
 
-@SOCKET_IO.on('get_pilotrace', get_from_typehint=True)
+@SOCKET_IO.on('get_pilotrace')
 @catchLogExcWithDBWrapper
-def get_pilotrace(data: GetPilotRaceRequest) -> None:
+def get_pilotrace(data):
     # get single race detail
-    pilotrace = RaceContext.rhdata.get_savedPilotRace(data.pilotrace_id)
+    if 'pilotrace_id' in data:
+        pilotrace = RaceContext.rhdata.get_savedPilotRace(data['pilotrace_id'])
 
-    if pilotrace:
-        laps = []
-        for lap in RaceContext.rhdata.get_savedRaceLaps_by_savedPilotRace(pilotrace.id):
-            laps.append({
-                    'id': lap.id,
-                    'lap_time_stamp': lap.lap_time_stamp,
-                    'lap_time': lap.lap_time,
-                    'lap_time_formatted': lap.lap_time_formatted,
-                    'source': lap.source,
-                    'deleted': lap.deleted,
-                    'peak_rssi': lap.peak_rssi
-                })
+        if pilotrace:
+            laps = []
+            for lap in RaceContext.rhdata.get_savedRaceLaps_by_savedPilotRace(pilotrace.id):
+                laps.append({
+                        'id': lap.id,
+                        'lap_time_stamp': lap.lap_time_stamp,
+                        'lap_time': lap.lap_time,
+                        'lap_time_formatted': lap.lap_time_formatted,
+                        'source': lap.source,
+                        'deleted': lap.deleted,
+                        'peak_rssi': lap.peak_rssi
+                    })
 
-        pilot_data = RaceContext.rhdata.get_pilot(pilotrace.pilot_id)
-        if pilot_data:
-            nodepilot = pilot_data.callsign
-        else:
-            nodepilot = None
+            pilot_data = RaceContext.rhdata.get_pilot(pilotrace.pilot_id)
+            if pilot_data:
+                nodepilot = pilot_data.callsign
+            else:
+                nodepilot = None
 
-        emit('race_details', {
-            'pilotrace_id': data.pilotrace_id,
-            'callsign': nodepilot,
-            'pilot_id': pilotrace.pilot_id,
-            'node_index': pilotrace.node_index,
-            'history_values': json.loads(pilotrace.history_values),
-            'history_times': json.loads(pilotrace.history_times),
-            'laps': laps,
-            'enter_at': pilotrace.enter_at,
-            'exit_at': pilotrace.exit_at,
-            'marshal_type': pilotrace.marshal_type
-        })
+            emit('race_details', {
+                'pilotrace_id': data['pilotrace_id'],
+                'callsign': nodepilot,
+                'pilot_id': pilotrace.pilot_id,
+                'node_index': pilotrace.node_index,
+                'history_values': json.loads(pilotrace.history_values),
+                'history_times': json.loads(pilotrace.history_times),
+                'laps': laps,
+                'enter_at': pilotrace.enter_at,
+                'exit_at': pilotrace.exit_at,
+                'marshal_type': pilotrace.marshal_type
+            })
 
 @SOCKET_IO.on('check_bpillfw_file')
 @catchLogExceptionsWrapper
