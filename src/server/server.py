@@ -1286,8 +1286,9 @@ def on_duplicate_heat(data):
 @SOCKET_IO.on('deactivate_heat', get_from_typehint=True)
 @catchLogExcWithDBWrapper
 def on_deactivate_heat(data: HeatRequest) -> None:
+    data = data.model_dump()
     RaceContext.rhdata.alter_heat({
-        'heat': data.heat,
+        'heat': data['heat'],
         'active': False
     })
     RaceContext.rhui.emit_heat_data()
@@ -1295,8 +1296,9 @@ def on_deactivate_heat(data: HeatRequest) -> None:
 @SOCKET_IO.on('activate_heat', get_from_typehint=True)
 @catchLogExcWithDBWrapper
 def on_activate_heat(data: HeatRequest) -> None:
+    data = data.model_dump()
     RaceContext.rhdata.alter_heat({
-        'heat': data.heat,
+        'heat': data['heat'],
         'active': True
     })
     RaceContext.rhui.emit_heat_data()
@@ -1568,8 +1570,9 @@ def on_set_profile(data, emit_vals=True):
 @catchLogExcWithDBWrapper
 def on_alter_race(data: AlterRaceRequest) -> None:
     '''Update race (retroactively via marshaling).'''
+    data = data.model_dump()
 
-    race_meta, new_heat = RaceContext.rhdata.reassign_savedRaceMeta_heat(data.race_id, data.heat_id)
+    race_meta, new_heat = RaceContext.rhdata.reassign_savedRaceMeta_heat(data['race_id'], data['heat_id'])
 
     if race_meta or new_heat:
         message = __('A race has been reassigned to {0}').format(new_heat.display_name)
@@ -2401,7 +2404,8 @@ def on_get_server_time(*args) -> ServerTimeResponse:
 @SOCKET_IO.on('schedule_race', get_from_typehint=True)
 @catchLogExceptionsWrapper
 def on_schedule_race(data: ScheduleRaceRequest) -> None:
-    RaceContext.race.schedule(data.s, data.m)
+    data = data.model_dump()
+    RaceContext.race.schedule(data['s'], data['m'])
 
 @SOCKET_IO.on('cancel_schedule_race', get_from_typehint=True)
 @catchLogExceptionsWrapper
@@ -2429,17 +2433,18 @@ def on_save_race(*args) -> None:
 @SOCKET_IO.on('resave_laps', get_from_typehint=True)
 @catchLogExcWithDBWrapper
 def on_resave_laps(data: ResaveLapsRequest) -> None:
-    heat_id = data.heat_id
-    round_id = data.round_id
-    callsign = data.callsign
+    data = data.model_dump()
+    heat_id = data['heat_id']
+    round_id = data['round_id']
+    callsign = data['callsign']
 
-    race_id = data.race_id
-    pilotrace_id = data.pilotrace_id
-    seat = data.seat
-    pilot_id = data.pilot_id
-    laps = data.laps
-    enter_at = data.enter_at
-    exit_at = data.exit_at
+    race_id = data['race_id']
+    pilotrace_id = data['pilotrace_id']
+    seat = data['seat']
+    pilot_id = data['pilot_id']
+    laps = data['laps']
+    enter_at = data['enter_at']
+    exit_at = data['exit_at']
 
     pilotrace_data = {
         'pilotrace_id': pilotrace_id,
@@ -2464,17 +2469,17 @@ def on_resave_laps(data: ResaveLapsRequest) -> None:
         }
 
     for lap in laps:
-        tmp_lap_time_formatted = lap.lap_time
-        if isinstance(lap.lap_time, float) or isinstance(lap.lap_time, int):
-            tmp_lap_time_formatted = RHUtils.format_time_to_str(lap.lap_time, RaceContext.serverconfig.get_item('UI', 'timeFormat'))
+        tmp_lap_time_formatted = lap['lap_time']
+        if isinstance(lap['lap_time'], float) or isinstance(lap['lap_time'], int):
+            tmp_lap_time_formatted = RHUtils.format_time_to_str(lap['lap_time'], RaceContext.serverconfig.get_item('UI', 'timeFormat'))
 
         new_racedata['laps'].append({
-            'lap_time_stamp': lap.lap_time_stamp,
-            'lap_time': lap.lap_time,
+            'lap_time_stamp': lap['lap_time_stamp'],
+            'lap_time': lap['lap_time'],
             'lap_time_formatted': tmp_lap_time_formatted,
-            'peak_rssi': lap.peak_rssi,
-            'source': lap.source,
-            'deleted': lap.deleted
+            'peak_rssi': lap.get('peak_rssi', None),
+            'source': lap['source'],
+            'deleted': lap['deleted']
             })
 
     RaceContext.rhdata.replace_savedRaceLaps(new_racedata)
@@ -2526,15 +2531,16 @@ def on_resave_laps(data: ResaveLapsRequest) -> None:
 
 @SOCKET_IO.on('replace_current_laps', get_from_typehint=True)
 def replace_current_laps(data: ReplaceCurrentLapsRequest) -> None:
+    data = data.model_dump()
     on_set_enter_at_level({
-        'node': data.seat,
-        'enter_at_level': data.enter_at
+        'node': data['seat'],
+        'enter_at_level': data['enter_at']
     })
     on_set_exit_at_level({
-        'node': data.seat,
-        'exit_at_level': data.exit_at
+        'node': data['seat'],
+        'exit_at_level': data['exit_at']
     })
-    RaceContext.race.replace_laps(data.model_dump())
+    RaceContext.race.replace_laps(data)
 
 @catchLogExcWithDBWrapper
 def build_atomic_result_caches(params):
@@ -2550,19 +2556,20 @@ def on_discard_laps(**kwargs) -> None:
 @SOCKET_IO.on('calc_pilots', get_from_typehint=True)
 @catchLogExcWithDBWrapper
 def on_calc_pilots(data: CalcPilotsRequest) -> None:
-    heat_id = data.heat
+    data = data.model_dump()
+    heat_id = data['heat']
     assignments = {} # convert indexes to ints
-    if data.preassignments:
-        for slot, seat in data.preassignments.items():
+    if 'preassignments' in data:
+        for slot, seat in data['preassignments'].items():
             assignments[int(slot)] = seat
     RaceContext.heatautomator.calc_heat(heat_id, preassignments=assignments)
 
 @SOCKET_IO.on('calc_reset', get_from_typehint=True)
 @catchLogExcWithDBWrapper
 def on_calc_reset(data: CalcResetRequest) -> None:
-    heat_data = data.model_dump()
-    heat_data['status'] = Database.HeatStatus.PLANNED
-    on_alter_heat(heat_data)
+    data = data.model_dump()
+    data['status'] = Database.HeatStatus.PLANNED
+    on_alter_heat(data)
 
 @SOCKET_IO.on('confirm_heat_plan')
 @catchLogExcWithDBWrapper
