@@ -27,6 +27,7 @@ import log
 from datetime import datetime
 from time import monotonic
 import RHTimeFns
+from typing import Any
 
 log.early_stage_setup()
 logger = logging.getLogger(__name__)
@@ -53,6 +54,36 @@ from RHUtils import catchLogExceptionsWrapper
 import gevent.monkey
 gevent.monkey.patch_all()
 
+from sio_asyncapi import AsyncAPISocketIO, RequestValidationError
+from api_schema import (
+    AlterRaceRequest,
+    CalcPilotsRequest,
+    CalcResetRequest,
+    CalloutsEvent,
+    CurrentHeatEvent,
+    CurrentLapsEvent,
+    DictLoadType,
+    FirstPassRegisteredEvent,
+    GetPilotRaceRequest,
+    HeatDataEvent,
+    HeatRequest,
+    LeaderboardEvent,
+    LoadDataRequest,
+    PhoneticDataEvent,
+    PhoneticLeaderEvent,
+    PhoneticSplitCallEvent,
+    PhoneticTextEvent,
+    PilotDataEvent,
+    RaceListEvent,
+    RaceScheduledEvent,
+    RaceStatusEvent,
+    ReplaceCurrentLapsRequest,
+    ResaveLapsRequest,
+    ScheduleRaceRequest,
+    ServerTimeResponse,
+    SetCurrentHeatRequest,
+)
+
 import io
 import os
 import sys
@@ -61,6 +92,7 @@ import subprocess
 import importlib
 # import copy
 import functools
+import inspect
 import signal
 import werkzeug
 import urllib3
@@ -70,6 +102,7 @@ from flask.blueprints import Blueprint
 from flask_socketio import SocketIO, emit
 
 PROGRAM_DIR = os.path.dirname(os.path.realpath(__file__))
+GENERATE_ASYNCAPI_DOCS = os.environ.get('RH_GENERATE_ASYNCAPI') == '1'
 
 # determine data location
 DATA_DIR = None
@@ -278,7 +311,37 @@ if __name__ == '__main__' and len(sys.argv) > 1:
             sys.exit(1)
 
 # start SocketIO service
-SOCKET_IO = SocketIO(APP, async_mode='gevent', cors_allowed_origins=RaceContext.serverconfig.get_item('GENERAL', 'CORS_ALLOWED_HOSTS'), max_http_buffer_size=5e7)
+SOCKET_IO = AsyncAPISocketIO(
+    APP, 
+    async_mode='gevent', 
+    cors_allowed_origins=RaceContext.serverconfig.get_item('GENERAL', 'CORS_ALLOWED_HOSTS'), 
+    max_http_buffer_size=5e7,
+    validate=True,
+    generate_docs=GENERATE_ASYNCAPI_DOCS,
+    version="1.0.0",
+    title="RotorHazard API",
+    description="WebSocket API для управления гонкой"
+)
+
+
+for event_name, event_model, event_description in [
+    ('leaderboard', LeaderboardEvent, 'Current and previous race standings.'),
+    ('current_laps', CurrentLapsEvent, 'Lap list and lap timing data for the current race.'),
+    ('race_status', RaceStatusEvent, 'Race state, timing, active heat/class, and next-round data.'),
+    ('current_heat', CurrentHeatEvent, 'Current heat assignment and node display data.'),
+    ('pilot_data', PilotDataEvent, 'Pilot list, sort mode, and pilot attribute metadata.'),
+    ('heat_data', HeatDataEvent, 'Heat list, slots, and heat attribute metadata.'),
+    ('race_list', RaceListEvent, 'Saved race history grouped by heat.'),
+    ('race_scheduled', RaceScheduledEvent, 'Scheduled race countdown state.'),
+    ('phonetic_data', PhoneticDataEvent, 'Lap-time callout data for race announcements.'),
+    ('phonetic_leader', PhoneticLeaderEvent, 'Current leader callout data.'),
+    ('phonetic_text', PhoneticTextEvent, 'Free-form phonetic announcement text.'),
+    ('phonetic_split_call', PhoneticSplitCallEvent, 'Split-pass callout data.'),
+    ('callouts', CalloutsEvent, 'Saved voice callout text snippets.'),
+    ('first_pass_registered', FirstPassRegisteredEvent, 'First-pass notification for a node.'),
+]:
+    SOCKET_IO.doc_emit(event_name, event_model, event_description)(lambda: None)
+
 
 # this is the moment where we can forward log-messages to the frontend, and
 # thus set up logging for good.
@@ -323,6 +386,7 @@ def catchLogExcWithDBWrapper(func):
                 return func(*args, **kwargs)
         except:
             logger.exception("Exception via catchLogExcWithDBWrapper")
+    wrapper.__signature__ = inspect.signature(func)
     return wrapper
 
 # Return 'DEF_NODE_FWUPDATE_URL' config value; if not set in 'config.json'
@@ -744,9 +808,9 @@ def start_background_threads_delayed():
 # Socket IO Events
 #
 
-@SOCKET_IO.on('connect')
+@SOCKET_IO.on('connect', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def connect_handler(auth):
+def connect_handler(auth: Any | None) -> None:
     '''Starts the interface and a heartbeat thread for rssi.'''
     logger.debug('Client connected')
     if not RaceContext.serverstate.interface_started:
@@ -761,8 +825,8 @@ def connect_handler(auth):
     # pause and spawn to make sure connection to browser is established
     gevent.spawn_later(0.050, finish_connect_handler)
 
-@SOCKET_IO.on('disconnect')
-def disconnect_handler(*args):
+@SOCKET_IO.on('disconnect', get_from_typehint=True)
+def disconnect_handler(*args) -> None:
     '''Emit disconnect event.'''
     logger.debug('Client disconnected')
 
@@ -1219,18 +1283,20 @@ def on_duplicate_heat(data):
     RaceContext.rhdata.duplicate_heat(data['heat'])
     RaceContext.rhui.emit_heat_data()
 
-@SOCKET_IO.on('deactivate_heat')
+@SOCKET_IO.on('deactivate_heat', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def on_deactivate_heat(data):
+def on_deactivate_heat(data: HeatRequest) -> None:
+    data = data.model_dump()
     RaceContext.rhdata.alter_heat({
         'heat': data['heat'],
         'active': False
     })
     RaceContext.rhui.emit_heat_data()
 
-@SOCKET_IO.on('activate_heat')
+@SOCKET_IO.on('activate_heat', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def on_activate_heat(data):
+def on_activate_heat(data: HeatRequest) -> None:
+    data = data.model_dump()
     RaceContext.rhdata.alter_heat({
         'heat': data['heat'],
         'active': True
@@ -1500,10 +1566,11 @@ def on_set_profile(data, emit_vals=True):
     else:
         logger.warning('Invalid set_profile value: ' + str(profile_val))
 
-@SOCKET_IO.on('alter_race')
+@SOCKET_IO.on('alter_race', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def on_alter_race(data):
+def on_alter_race(data: AlterRaceRequest) -> None:
     '''Update race (retroactively via marshaling).'''
+    data = data.model_dump()
 
     race_meta, new_heat = RaceContext.rhdata.reassign_savedRaceMeta_heat(data['race_id'], data['heat_id'])
 
@@ -2329,42 +2396,44 @@ def on_get_pi_time(*args):
         'pi_time_s': monotonic()
     })
 
-@SOCKET_IO.on('get_server_time')
+@SOCKET_IO.on('get_server_time', get_from_typehint=True)
 @catchLogExceptionsWrapper
-def on_get_server_time(*args):
+def on_get_server_time(*args) -> ServerTimeResponse:
     return {'server_time_s': monotonic()}
 
-@SOCKET_IO.on('schedule_race')
+@SOCKET_IO.on('schedule_race', get_from_typehint=True)
 @catchLogExceptionsWrapper
-def on_schedule_race(data):
+def on_schedule_race(data: ScheduleRaceRequest) -> None:
+    data = data.model_dump()
     RaceContext.race.schedule(data['s'], data['m'])
 
-@SOCKET_IO.on('cancel_schedule_race')
+@SOCKET_IO.on('cancel_schedule_race', get_from_typehint=True)
 @catchLogExceptionsWrapper
-def cancel_schedule_race(*args):
+def cancel_schedule_race(*args) -> None:
     RaceContext.race.schedule(None)
 
-@SOCKET_IO.on('stage_race')
-def on_stage_race(*args):
+@SOCKET_IO.on('stage_race', get_from_typehint=True)
+def on_stage_race(*args) -> None:
     result = RaceContext.race.stage(*args)
     if not result:
         RaceContext.rhui.emit_race_status()
 
-@SOCKET_IO.on('stop_race')
-def on_stop_race(*args):
+@SOCKET_IO.on('stop_race', get_from_typehint=True)
+def on_stop_race(*args) -> None:
     RaceContext.race.stop(*args)
 
-@SOCKET_IO.on('current_race_marshal')
-def on_current_race_marshal(*args):
+@SOCKET_IO.on('current_race_marshal', get_from_typehint=True)
+def on_current_race_marshal(*args) -> None:
     RaceContext.rhui.emit_race_marshal_data(nobroadcast=True)
 
-@SOCKET_IO.on('save_laps')
-def on_save_race(*args):
+@SOCKET_IO.on('save_laps', get_from_typehint=True)
+def on_save_race(*args) -> None:
     RaceContext.race.save(*args)
 
-@SOCKET_IO.on('resave_laps')
+@SOCKET_IO.on('resave_laps', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def on_resave_laps(data):
+def on_resave_laps(data: ResaveLapsRequest) -> None:
+    data = data.model_dump()
     heat_id = data['heat_id']
     round_id = data['round_id']
     callsign = data['callsign']
@@ -2460,8 +2529,9 @@ def on_resave_laps(data):
         'pilot_id': pilot_id,
         })
 
-@SOCKET_IO.on('replace_current_laps')
-def replace_current_laps(data):
+@SOCKET_IO.on('replace_current_laps', get_from_typehint=True)
+def replace_current_laps(data: ReplaceCurrentLapsRequest) -> None:
+    data = data.model_dump()
     on_set_enter_at_level({
         'node': data['seat'],
         'enter_at_level': data['enter_at']
@@ -2478,14 +2548,15 @@ def build_atomic_result_caches(params):
     Results.build_atomic_results(RaceContext.rhdata, params)
     RaceContext.rhui.emit_result_data()
 
-@SOCKET_IO.on('discard_laps')
+@SOCKET_IO.on('discard_laps', get_from_typehint=True)
 @catchLogExceptionsWrapper
-def on_discard_laps(**kwargs):
+def on_discard_laps(**kwargs) -> None:
     RaceContext.race.discard_laps(**kwargs)
 
-@SOCKET_IO.on('calc_pilots')
+@SOCKET_IO.on('calc_pilots', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def on_calc_pilots(data):
+def on_calc_pilots(data: CalcPilotsRequest) -> None:
+    data = data.model_dump()
     heat_id = data['heat']
     assignments = {} # convert indexes to ints
     if 'preassignments' in data:
@@ -2493,9 +2564,10 @@ def on_calc_pilots(data):
             assignments[int(slot)] = seat
     RaceContext.heatautomator.calc_heat(heat_id, preassignments=assignments)
 
-@SOCKET_IO.on('calc_reset')
+@SOCKET_IO.on('calc_reset', get_from_typehint=True)
 @catchLogExcWithDBWrapper
-def on_calc_reset(data):
+def on_calc_reset(data: CalcResetRequest) -> None:
+    data = data.model_dump()
     data['status'] = Database.HeatStatus.PLANNED
     on_alter_heat(data)
 
@@ -2622,9 +2694,9 @@ def on_set_consecutives_count(data):
         'value': data['count'],
         })
 
-@SOCKET_IO.on('get_race_scheduled')
+@SOCKET_IO.on('get_race_scheduled', get_from_typehint=True)
 @catchLogExceptionsWrapper
-def get_race_elapsed(*args):
+def get_race_elapsed(*args) -> None:
     # get current race status; never broadcasts to all
     emit('race_scheduled', {
         'scheduled': RaceContext.race.scheduled,
